@@ -1,7 +1,7 @@
 #include <iostream>
 #include <chrono>
 
-#include "lib/vm.hpp"
+#include "vm/vm.hpp"
 
 int main(){
     using clock = std::chrono::steady_clock;

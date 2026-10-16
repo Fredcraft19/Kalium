@@ -9,7 +9,7 @@
 ## Basic Commands
 Essential commands to use
 
-PUSH
+*PUSH*
 
 Pushes a value into the Operation Stack (oStack)
 ```asm

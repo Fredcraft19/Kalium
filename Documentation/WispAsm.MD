@@ -30,7 +30,7 @@ push -9123s
 
 
 ## Stack Control
-ENTER
+**ENTER**
 
 Reserves space in the vStack for variables in the method/label
 ```asm
@@ -43,7 +43,7 @@ enter 90231
 
 ```
 
-STORE
+**STORE**
 
 Stores a value in oStack at an index
 ```asm
@@ -59,7 +59,7 @@ storef32 x  ; stores 32bit float
 storef64 x  ; stores 64bit float
 ```
 
-LOAD
+**LOAD**
 
 Pushes value from vStack into oStack, using an index you set from STORE
 ```asm
@@ -83,7 +83,7 @@ loadf64    ; loads float64 value
 
 ## Heap Control
 
-HEAP-STORE
+**HEAP-STORE**
 
 Stores value at an address in vHeap, value and address gotten from oStack
 ```asm
@@ -102,7 +102,7 @@ heap-storef32      ; stores 32bit float in heap
 heap-storef64      ; stores 64bit float in heap
 ```
 
-HEAP-LOAD
+**HEAP-LOAD**
 
 Pushes value from address in vHeap
 
@@ -123,7 +123,7 @@ heap-loads64    ; loads int64 value in heap
 heap-loadf32    ; loads float32 value in heap
 heap-loadf64    ; loads float64 value in heap
 
-MALLOC
+**MALLOC**
 
 Allocates memory in the vHeap
 ```asm
@@ -132,7 +132,7 @@ push memory_to_allocate (uint)
 malloc
 ```
 
-REF
+**REF**
 
 Pushes full stack address of variable on vStack, gets variable index from argument
 ```asm

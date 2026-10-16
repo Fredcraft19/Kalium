@@ -1,5 +1,6 @@
 # Wisp Assembly Documentation
-## Abreviations
+## Notes
+Sorry for the colors messed up in the examples.. They should look 'okay' still
 * 'OStack' is the Operation Stack
 * 'VStack' is the Variable Stack
 * 'VHeap' is the variable heap

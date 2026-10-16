@@ -1,6 +1,3 @@
 # Documentation
 ## WispAsm
-Documentation for Wisp Assembly is here ()[]
-
-## Wisp
-Documentation for Wisp is here ()[]
+Documentation for Wisp Assembly is here [Assembly Documentation](/Documentation/WispAsm.MD)

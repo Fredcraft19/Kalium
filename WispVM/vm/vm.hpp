@@ -1,249 +1,440 @@
+#pragma once
+
 #include <cstdint>
+#include <cstring>
 #include <vector>
 #include <bit>
+#include <iostream>
+#include <stdexcept>
 
 #include "data.hpp"
 
-
-class vm{
-
+class vm {
 private:
-
-    // Variable Heap
-    inline static v_heap vHeap;
-
-    // Variable Stack
+    inline static v_heap  vHeap;
     inline static v_stack vStack;
-    
-    // Operation Stack
     inline static o_stack oStack;
-
-    // Call Stack
     inline static c_stack cStack;
 
-public:
-    static void execute(std::vector<uint8_t>& bc){
-        vStack.ptr = 0;
-        uint64_t ip = 0;
-        
-        while(ip < bc.size()){
+    template <typename To, typename From>
+    static To bit_cast(const From& src) {
+        static_assert(sizeof(To) == sizeof(From), "bit_cast size mismatch");
+        To dst;
+        std::memcpy(&dst, &src, sizeof(To));
+        return dst;
+    }
 
-            switch(bc[ip++]){
+    template <typename T>
+    static T fetch(const std::vector<uint8_t>& bc, uint64_t& ip) {
+        if (ip + sizeof(T) > bc.size()) throw std::runtime_error("truncated bytecode");
+        T v;
+        std::memcpy(&v, bc.data() + ip, sizeof(T));
+        ip += sizeof(T);
+        return v;
+    }
+
+    static double popDouble() { return bit_cast<double>(oStack.pop()); }
+    static void pushDouble(double d) { oStack.push(bit_cast<uint64_t>(d)); }
+
+    // vstack helpers
+
+    template <typename T>   // ints
+    static void storeFrame(const std::vector<uint8_t>& bc, uint64_t& ip) {
+        uint32_t addr = vStack.getAddress(fetch<uint32_t>(bc, ip));
+        vStack.write(addr, static_cast<T>(oStack.pop()));
+    }
+    template <typename F>   // floats
+    static void storeFrameF(const std::vector<uint8_t>& bc, uint64_t& ip) {
+        uint32_t addr = vStack.getAddress(fetch<uint32_t>(bc, ip));
+        vStack.write(addr, static_cast<F>(popDouble()));
+    }
+    template <typename T>
+    static void loadFrame(const std::vector<uint8_t>& bc, uint64_t& ip) {
+        uint32_t addr = vStack.getAddress(fetch<uint32_t>(bc, ip));
+        oStack.push(static_cast<uint64_t>(vStack.read<T>(addr)));
+    }
+    template <typename F>
+    static void loadFrameF(const std::vector<uint8_t>& bc, uint64_t& ip) {
+        uint32_t addr = vStack.getAddress(fetch<uint32_t>(bc, ip));
+        pushDouble(static_cast<double>(vStack.read<F>(addr)));
+    }
+
+    template <typename T>
+    static void storeAddr() {
+        uint64_t address = oStack.pop();
+        vStack.write(address, static_cast<T>(oStack.pop()));
+    }
+    template <typename F>
+    static void storeAddrF() {
+        uint64_t address = oStack.pop();
+        vStack.write(address, static_cast<F>(popDouble()));
+    }
+
+    // vHeap helpers
+    template <typename T>
+    static void hstore() {
+        uint64_t address = oStack.pop();
+        vHeap.write(address, static_cast<T>(oStack.pop()));
+    }
+    template <typename T>
+    static void hstoreF() {
+        uint64_t address = oStack.pop();
+        vHeap.write(address, static_cast<T>(popDouble()));
+    }
+    template <typename T>
+    static void hload() {
+        oStack.push(static_cast<uint64_t>(vHeap.read<T>(oStack.pop())));
+    }
+    template <typename T>
+    static void hloadF() {
+        pushDouble(static_cast<double>(vHeap.read<T>(oStack.pop())));
+    }
+
+public:
+    static void execute(std::vector<uint8_t>& bc) {
+        vStack.fp  = 0;
+        vStack.ptr = 0;     // main must start with ENTER <frameSize>
+        uint64_t ip = 0;
+
+        while (ip < bc.size()) {
+
+            //std::cout << "IP: " << std::to_string(ip) << "\n";
+            
+            switch (bc[ip++]) {
                 case OPCODE::Null:
-                    std::cout << "Null Command. Skipping Line..";
+                    std::cout << "Null Command. Skipping Line..\n";
                     break;
                 case OPCODE::EXIT:
-                    std::cout << "EXIT (0xFF) Reached\n";
+                    //std::cout << "EXIT (0xFF) Reached\n";
                     return;
-                
-                case OPCODE::PUSH_CONST:
-                {
-                    uint64_t val = 0;
-                    std::memcpy(&val, bc.data() + ip, 8);
-                    oStack.push(val);
-                    ip += 8;
-                    break;
-                }
 
-                case OPCODE::STORE_8:
-                    vStack.push <uint8_t>(oStack.pop()); break;
-                case OPCODE::STORE_16:
-                    vStack.push<uint16_t>(oStack.pop()); break;
-                case OPCODE::STORE_32:
-                    vStack.push<uint32_t>(oStack.pop()); break;
-                case OPCODE::STORE_64:
-                    vStack.push<uint64_t>(oStack.pop()); break;
-                
-                case OPCODE::STORE_F32:
-                {
-                    float val = 0.f;
-                    uint32_t raw = static_cast<uint32_t>(oStack.pop());
-                    std::memcpy(&val, &raw, sizeof(float));
-                    vStack.push<float>(val);
+                case OPCODE::PUSH_CONST: oStack.push(fetch<uint64_t>(bc, ip)); break;
 
-                    // What does this do??
-                    // 1. Pops top uint64 from OStack
-                    // 2. Converts uint64 to uint32
-                    // 3. converts uint32 to float
-                    // 4. stores float in vStack
-                    break;
-                }
-                case OPCODE::STORE_F64:
-                {
-                    double val = 0.0;
-                    uint64_t raw = oStack.pop();
-                    std::memcpy(&val, &raw, sizeof(double));
-                    vStack.push<double>(val);
+                // Frame-relative stores
+                case OPCODE::STORE_8:   storeFrame<uint8_t>(bc, ip);  break;
+                case OPCODE::STORE_16:  storeFrame<uint16_t>(bc, ip); break;
+                case OPCODE::STORE_32:  storeFrame<uint32_t>(bc, ip); break;
+                case OPCODE::STORE_64:  storeFrame<uint64_t>(bc, ip); break;
+                case OPCODE::STORE_F32: storeFrameF<float>(bc, ip);   break;
+                case OPCODE::STORE_F64: storeFrameF<double>(bc, ip);  break;
 
-                    // What does this do??
-                    // 1. Pops top uint64 from OStack
-                    // 2. Converts uint64 to double
-                    // 3. stores double in vStack
-                    break;
-                }
+                // Stores through an address
+                case OPCODE::STORE_ADDR_8:   storeAddr<uint8_t>();  break;
+                case OPCODE::STORE_ADDR_16:  storeAddr<uint16_t>(); break;
+                case OPCODE::STORE_ADDR_32:  storeAddr<uint32_t>(); break;
+                case OPCODE::STORE_ADDR_64:  storeAddr<uint64_t>(); break;
+                case OPCODE::STORE_ADDR_F32: storeAddrF<float>();   break;
+                case OPCODE::STORE_ADDR_F64: storeAddrF<double>();  break;
 
-                case OPCODE::LOAD_U8:
-                {
-                    // Gets 32-bit offset in stack
-                    uint32_t addr = 0;
-                    std::memcpy(&addr, bc.data() + ip, 4); ip += 4;
-                    
-                    // debug value check
-                    //std::cout << std::to_string(vStack.read<uint8_t>(addr)) << "\n";
+                // Frame-relative loads
+                case OPCODE::LOAD_U8:  loadFrame<uint8_t>(bc, ip);  break;
+                case OPCODE::LOAD_U16: loadFrame<uint16_t>(bc, ip); break;
+                case OPCODE::LOAD_U32: loadFrame<uint32_t>(bc, ip); break;
+                case OPCODE::LOAD_U64: loadFrame<uint64_t>(bc, ip); break;
+                case OPCODE::LOAD_S8:  loadFrame<int8_t>(bc, ip);   break;
+                case OPCODE::LOAD_S16: loadFrame<int16_t>(bc, ip);  break;
+                case OPCODE::LOAD_S32: loadFrame<int32_t>(bc, ip);  break;
+                case OPCODE::LOAD_S64: loadFrame<int64_t>(bc, ip);  break;
+                case OPCODE::LOAD_F32: loadFrameF<float>(bc, ip);   break;
+                case OPCODE::LOAD_F64: loadFrameF<double>(bc, ip);  break;
 
-                    oStack.push(static_cast<uint64_t>(vStack.read<uint8_t>(addr)));
-                    // What does this do?
-                    // 1. Reads uint8 from 'addr'.
-                    // 2. Pushes the uint8 into the oStack
-                    break;
-                }
-                case OPCODE::LOAD_U16:{
-                    uint32_t addr = 0;
-                    std::memcpy(&addr, bc.data() + ip, 4); ip += 4;
-                    oStack.push(static_cast<uint64_t>(vStack.read<uint16_t>(addr))); break;
-                }
-                case OPCODE::LOAD_U32:{
-                    uint32_t addr = 0;
-                    std::memcpy(&addr, bc.data() + ip, 4); ip += 4;
-                    oStack.push(static_cast<uint64_t>(vStack.read<uint32_t>(addr))); break;
-                }
-                case OPCODE::LOAD_U64:{
-                    uint32_t addr = 0;
-                    std::memcpy(&addr, bc.data() + ip, 4); ip += 4;
-                    oStack.push(vStack.read<uint64_t>(addr)); break;
-                }
-                case OPCODE::LOAD_S8:
-                {
-                    uint32_t addr = 0;
-                    std::memcpy(&addr, bc.data() + ip, 4); ip += 4;
-                    oStack.push(static_cast<uint64_t>(static_cast<int64_t>(vStack.read<int8_t>(addr)))); break;
-                }
-                case OPCODE::LOAD_S16:{
-                    uint32_t addr = 0;
-                    std::memcpy(&addr, bc.data() + ip, 4); ip += 4;
-                    oStack.push(static_cast<uint64_t>(static_cast<int64_t>(vStack.read<int16_t>(addr)))); break;
-                }
-                case OPCODE::LOAD_S32:{
-                    uint32_t addr = 0;
-                    std::memcpy(&addr, bc.data() + ip, 4); ip += 4;
-                    oStack.push(static_cast<uint64_t>(static_cast<int64_t>(vStack.read<int32_t>(addr)))); break;
-                }
-                case OPCODE::LOAD_S64:{
-                    uint32_t addr = 0;
-                    std::memcpy(&addr, bc.data() + ip, 4); ip += 4;
-                    oStack.push(static_cast<uint64_t>(vStack.read<int64_t>(addr))); break;
-                }
+                // Heap
+                case OPCODE::HSTORE_8:   hstore<uint8_t>();  break;
+                case OPCODE::HSTORE_16:  hstore<uint16_t>(); break;
+                case OPCODE::HSTORE_32:  hstore<uint32_t>(); break;
+                case OPCODE::HSTORE_64:  hstore<uint64_t>(); break;
+                case OPCODE::HSTORE_F32: hstoreF<float>();   break;
+                case OPCODE::HSTORE_F64: hstoreF<double>();  break;
 
-                case OPCODE::HSTORE_8:{
-                    uint8_t value = oStack.pop();
-                    vHeap.write(oStack.pop(), value); break;
+                case OPCODE::HLOAD_U8:  hload<uint8_t>();  break;
+                case OPCODE::HLOAD_U16: hload<uint16_t>(); break;
+                case OPCODE::HLOAD_U32: hload<uint32_t>(); break;
+                case OPCODE::HLOAD_U64: hload<uint64_t>(); break;
+                case OPCODE::HLOAD_S8:  hload<int8_t>();   break;
+                case OPCODE::HLOAD_S16: hload<int16_t>();  break;
+                case OPCODE::HLOAD_S32: hload<int32_t>();  break;
+                case OPCODE::HLOAD_S64: hload<int64_t>();  break;
+                case OPCODE::HLOAD_F32: hloadF<float>();   break;
+                case OPCODE::HLOAD_F64: hloadF<double>();  break;
 
-                    // What does this do?
-                    // 1. Gets value to write on heap
-                    // 2. Gets address to write to (oStack.pop())
-                    // 3. Writes value to address in vHeap
-                }
-                case OPCODE::HSTORE_16:{
-                    uint16_t value = oStack.pop();
-                    vHeap.write(oStack.pop(), value); break;
-                }
-                case OPCODE::HSTORE_32:{
-                    uint32_t value = oStack.pop();
-                    vHeap.write(oStack.pop(), value); break;
-                }
-                case OPCODE::HSTORE_64:{
-                    uint64_t value = oStack.pop();
-                    vHeap.write(oStack.pop(), value); break;
-                }
-                case OPCODE::HSTORE_F32:{
-                    double _d = 0.0;
-                    uint64_t raw = oStack.pop();
-                    std::memcpy(&_d, &raw, sizeof(double));
-                    float value = static_cast<float>(_d);
-                    vHeap.write(oStack.pop(), value); break;
-                }
-                case OPCODE::HSTORE_F64:{
-                    double value = 0.0;
-                    uint64_t raw = oStack.pop();
-                    std::memcpy(&value, &raw, sizeof(double));
-                    vHeap.write(oStack.pop(), value); break;
-                }
-
-                case OPCODE::HLOAD_U8:
-                    oStack.push(vHeap.read<uint8_t>(oStack.pop()));
-                    break;
-                    // What does this do?
-                    // 1. Gets address from oStack.pop()
-                    // 2. Reads value from address in vHeap
-                    // 3. Pushes value to oStack
-                case OPCODE::HLOAD_U16:
-                    oStack.push(vHeap.read<uint16_t>(oStack.pop()));
-                    break;
-                case OPCODE::HLOAD_U32:
-                    oStack.push(vHeap.read<uint32_t>(oStack.pop()));
-                    break;
-                case OPCODE::HLOAD_U64:
-                    oStack.push(vHeap.read<uint64_t>(oStack.pop()));
-                    break;
-                case OPCODE::HLOAD_S8:
-                    oStack.push(static_cast<uint64_t>(static_cast<int64_t>(vHeap.read<int8_t>(oStack.pop()))));
-                    break;
-                    // What does this do?
-                    // 1. oStack.pop() gets address to read from vHeap
-                    // 2. Casts int8 into a int64
-                    // 3. Casts int64 to uint64 for oStack
-                    // 4. Pushes uint64 to oStack
-                case OPCODE::HLOAD_S16:
-                    oStack.push(static_cast<uint64_t>(static_cast<int64_t>(vHeap.read<int16_t>(oStack.pop()))));
-                    break;
-                case OPCODE::HLOAD_S32:
-                    oStack.push(static_cast<uint64_t>(static_cast<int64_t>(vHeap.read<int32_t>(oStack.pop()))));
-                    break;
-                case OPCODE::HLOAD_S64:
-                    oStack.push(static_cast<uint64_t>(static_cast<int64_t>(vHeap.read<int64_t>(oStack.pop()))));
-                    break;
-                case OPCODE::HLOAD_F32:
-                    oStack.push(std::bit_cast<uint64_t>(static_cast<double>(vHeap.read<float>(oStack.pop()))));
-                    break;
-                    // What does this do?
-                    // 1. Get address to read from heap
-                    // 2. cast float to double
-                    // 3. cast double to uint64
-                    // 4. push uint64 to oStack
-                case OPCODE::HLOAD_F64:
-                    oStack.push(std::bit_cast<uint64_t>(vHeap.read<double>(oStack.pop())));
-                    break;
-                
                 case OPCODE::MALLOC:
                     oStack.push(vHeap.allocate(static_cast<size_t>(oStack.pop())));
                     break;
-                    // What does this do?
-                    // 1. Gets size to allocate from oStack.pop
-                    // 2. Casts uint64 into size_t
-                    // 3. Pass size_t into vHeap.allocate()
-                    // 4. Push allocated memory address in oStack
 
-                case OPCODE::REF:{
-                    uint32_t offset = 0;
-                    std::memcpy(&offset, bc.data() + ip, 4);
-                    ip += 4;
-                    vStack.getAddress(cStack.csp, offset);
+                case OPCODE::FREE:
+                    oStack.pop();   // TODO: real free; for now just discards the address
+                    break;
 
-                }
+                case OPCODE::REF:
+                    oStack.push(vStack.getAddress(fetch<uint32_t>(bc, ip)));
+                    break;
 
-                case OPCODE::CALL:{
-                    cStack.push(vStack.ptr, ip);
-
+                case OPCODE::CALL: {
+                    uint32_t target = fetch<uint32_t>(bc, ip);
+                    cStack.push(vStack.fp, ip);     // ip is already past the operand
+                    vStack.fp = vStack.ptr;         // new frame starts at the top
+                    ip = target;
                     break;
                 }
-                case OPCODE::RET:{
-                    cStack.pop(vStack.ptr, ip);
+                case OPCODE::ENTER:
+                    vStack.ptr = vStack.fp + fetch<uint32_t>(bc, ip);
+                    break;
+
+                case OPCODE::RET:
+                    vStack.ptr = vStack.fp;
+                    cStack.pop(vStack.fp, ip);
+                    break;
+
+                case OPCODE::JUMP:{
+                    ip = fetch<uint32_t>(bc, ip);
+                    break;
+                }
+                case OPCODE::JUMPZ:{
+                    uint32_t target =  fetch<uint32_t>(bc, ip);
+                    if(static_cast<uint8_t>(oStack.pop()) == 0) ip = target;
+                    break;
+                }
+                case OPCODE::JUMPNZ:{
+                    uint32_t target =  fetch<uint32_t>(bc, ip);
+                    if(static_cast<uint8_t>(oStack.pop()) != 0) ip = target;
                     break;
                 }
 
 
+                case OPCODE::ADD_U:{
+                    uint64_t b = oStack.pop();
+                    uint64_t a = oStack.pop();
+                    oStack.push(a+b);                                   break;
+                }
+                case OPCODE::ADD_S:{
+                    int64_t b = static_cast<int64_t>(oStack.pop());
+                    int64_t a = static_cast<int64_t>(oStack.pop());
+                    oStack.push(static_cast<uint64_t>(a+b));          break;
+                }
+                case OPCODE::ADD_F:{
+                    double b = std::bit_cast<double>(oStack.pop());
+                    double a = std::bit_cast<double>(oStack.pop());
+                    oStack.push(std::bit_cast<uint64_t>(a+b));           break;
+                }
+
+                case OPCODE::SUB_U:{
+                    uint64_t b = oStack.pop();
+                    uint64_t a = oStack.pop();
+                    oStack.push(a-b);                                   break;
+                }
+                case OPCODE::SUB_S:{
+                    int64_t b = static_cast<int64_t>(oStack.pop());
+                    int64_t a = static_cast<int64_t>(oStack.pop());
+                    oStack.push(static_cast<uint64_t>(a-b));          break;
+                }
+                case OPCODE::SUB_F:{
+                    double b = std::bit_cast<double>(oStack.pop());
+                    double a = std::bit_cast<double>(oStack.pop());
+                    oStack.push(std::bit_cast<uint64_t>(a-b));           break;
+                }
+
+                case OPCODE::MUL_U:{
+                    uint64_t b = oStack.pop();
+                    uint64_t a = oStack.pop();
+                    oStack.push(a*b);                                   break;
+                }
+                case OPCODE::MUL_S:{
+                    int64_t b = static_cast<int64_t>(oStack.pop());
+                    int64_t a = static_cast<int64_t>(oStack.pop());
+                    oStack.push(static_cast<uint64_t>(a*b));          break;
+                }
+                case OPCODE::MUL_F:{
+                    double b = std::bit_cast<double>(oStack.pop());
+                    double a = std::bit_cast<double>(oStack.pop());
+                    oStack.push(std::bit_cast<uint64_t>(a*b));           break;
+                }
+
+                case OPCODE::DIV_U:{
+                    uint64_t b = oStack.pop();
+                    uint64_t a = oStack.pop();
+                    oStack.push(a/b);                                   break;
+                }
+                case OPCODE::DIV_S:{
+                    int64_t b = static_cast<int64_t>(oStack.pop());
+                    int64_t a = static_cast<int64_t>(oStack.pop());
+                    oStack.push(static_cast<uint64_t>(a/b));          break;
+                }
+                case OPCODE::DIV_F:{
+                    double b = std::bit_cast<double>(oStack.pop());
+                    double a = std::bit_cast<double>(oStack.pop());
+                    oStack.push(std::bit_cast<uint64_t>(a/b));           break;
+                }
+
+                case OPCODE::SAFE_DIV_U:{
+                    uint64_t b = oStack.pop();
+                    uint64_t a = oStack.pop();
+                    if(b==0) throw std::runtime_error("0 Division isnt allowed, IP: " + std::to_string(ip) + "\n");
+                    oStack.push(a/b);                                   break;
+                }
+                case OPCODE::SAFE_DIV_S:{
+                    int64_t b = static_cast<int64_t>(oStack.pop());
+                    int64_t a = static_cast<int64_t>(oStack.pop());
+                    if(b==0) throw std::runtime_error("0 Division isnt allowed, IP: " + std::to_string(ip) + "\n");
+                    oStack.push(static_cast<uint64_t>(a/b));          break;
+                }
+                case OPCODE::SAFE_DIV_F:{
+                    double b = std::bit_cast<double>(oStack.pop());
+                    double a = std::bit_cast<double>(oStack.pop());
+                    if(b==0) throw std::runtime_error("0 Division isnt allowed, IP: " + std::to_string(ip) + "\n");
+                    oStack.push(std::bit_cast<uint64_t>(a/b));           break;
+                }
+
+
+                case OPCODE::EQL_U:{
+                    uint64_t b = oStack.pop();
+                    uint64_t a = oStack.pop();
+                    uint8_t res = static_cast<uint8_t>(a == b);
+                    oStack.push(res);                        break;
+                }
+                case OPCODE::EQL_S:{
+                    int64_t b = static_cast<int64_t>(oStack.pop());
+                    int64_t a = static_cast<int64_t>(oStack.pop());
+                    uint8_t res = static_cast<uint8_t>(a == b);
+                    oStack.push(res);                         break;
+                }
+                case OPCODE::EQL_F:{
+                    double b = std::bit_cast<double>(oStack.pop());
+                    double a = std::bit_cast<double>(oStack.pop());
+                    uint8_t res = static_cast<uint8_t>(a == b);
+                    oStack.push(res);                         break;
+                }
+
+                case OPCODE::NEQL_U:{
+                    uint64_t b = oStack.pop();
+                    uint64_t a = oStack.pop();
+                    uint8_t res = static_cast<uint8_t>(a != b);
+                    oStack.push(res);                        break;
+                }
+                case OPCODE::NEQL_S:{
+                    int64_t b = static_cast<int64_t>(oStack.pop());
+                    int64_t a = static_cast<int64_t>(oStack.pop());
+                    uint8_t res = static_cast<uint8_t>(a != b);
+                    oStack.push(res);                         break;
+                }
+                case OPCODE::NEQL_F:{
+                    double b = std::bit_cast<double>(oStack.pop());
+                    double a = std::bit_cast<double>(oStack.pop());
+                    uint8_t res = static_cast<uint8_t>(a != b);
+                    oStack.push(res);                         break;
+                }
+
+                case OPCODE::GTR_U:{
+                    uint64_t b = oStack.pop();
+                    uint64_t a = oStack.pop();
+                    uint8_t res = static_cast<uint8_t>(a > b);
+                    oStack.push(res);                        break;
+                }
+                case OPCODE::GTR_S:{
+                    int64_t b = static_cast<int64_t>(oStack.pop());
+                    int64_t a = static_cast<int64_t>(oStack.pop());
+                    uint8_t res = static_cast<uint8_t>(a > b);
+                    oStack.push(res);                         break;
+                }
+                case OPCODE::GTR_F:{
+                    double b = std::bit_cast<double>(oStack.pop());
+                    double a = std::bit_cast<double>(oStack.pop());
+                    uint8_t res = static_cast<uint8_t>(a > b);
+                    oStack.push(res);                         break;
+                }
+                case OPCODE::EGTR_U:{
+                    uint64_t b = oStack.pop();
+                    uint64_t a = oStack.pop();
+                    uint8_t res = static_cast<uint8_t>(a >= b);
+                    oStack.push(res);                        break;
+                }
+                case OPCODE::EGTR_S:{
+                    int64_t b = static_cast<int64_t>(oStack.pop());
+                    int64_t a = static_cast<int64_t>(oStack.pop());
+                    uint8_t res = static_cast<uint8_t>(a >= b);
+                    oStack.push(res);                         break;
+                }
+                case OPCODE::EGTR_F:{
+                    double b = std::bit_cast<double>(oStack.pop());
+                    double a = std::bit_cast<double>(oStack.pop());
+                    uint8_t res = static_cast<uint8_t>(a >= b);
+                    oStack.push(res);                         break;
+                }
+
+                case OPCODE::LES_U:{
+                    uint64_t b = oStack.pop();
+                    uint64_t a = oStack.pop();
+                    uint8_t res = static_cast<uint8_t>(a < b);
+                    oStack.push(res);                        break;
+                }
+                case OPCODE::LES_S:{
+                    int64_t b = static_cast<int64_t>(oStack.pop());
+                    int64_t a = static_cast<int64_t>(oStack.pop());
+                    uint8_t res = static_cast<uint8_t>(a < b);
+                    oStack.push(res);                         break;
+                }
+                case OPCODE::LES_F:{
+                    double b = std::bit_cast<double>(oStack.pop());
+                    double a = std::bit_cast<double>(oStack.pop());
+                    uint8_t res = static_cast<uint8_t>(a < b);
+                    oStack.push(res);                         break;
+                }
+                case OPCODE::ELES_U:{
+                    uint64_t b = oStack.pop();
+                    uint64_t a = oStack.pop();
+                    uint8_t res = static_cast<uint8_t>(a <= b);
+                    oStack.push(res);                        break;
+                }
+                case OPCODE::ELES_S:{
+                    int64_t b = static_cast<int64_t>(oStack.pop());
+                    int64_t a = static_cast<int64_t>(oStack.pop());
+                    uint8_t res = static_cast<uint8_t>(a <= b);
+                    oStack.push(res);                         break;
+                }
+                case OPCODE::ELES_F:{
+                    double b = std::bit_cast<double>(oStack.pop());
+                    double a = std::bit_cast<double>(oStack.pop());
+                    uint8_t res = static_cast<uint8_t>(a <= b);
+                    oStack.push(res);                         break;
+                }
+                case OPCODE::NOT:{
+                    bool val = oStack.pop() != 0;
+                    oStack.push(static_cast<uint8_t>(!val));
+                }
+
+                case OPCODE::U_F: {
+                    double F = static_cast<double>(oStack.pop());
+                    oStack.push(std::bit_cast<uint64_t>(F));
+                    break;
+                }
+                case OPCODE::S_F: {
+                    double F = static_cast<double>(std::bit_cast<int64_t>(oStack.pop()));
+                    oStack.push(std::bit_cast<uint64_t>(F));
+                    break;
+                }
+
+                case OPCODE::F_S: {
+                    int64_t S = static_cast<int64_t>(std::bit_cast<double>(oStack.pop()));
+                    oStack.push(std::bit_cast<uint64_t>(S));
+                    break;
+                }
+                case OPCODE::F_U: {
+                    uint64_t U = static_cast<uint64_t>(std::bit_cast<double>(oStack.pop()));
+                    oStack.push(U);
+                    break;
+                }
+
+                case OPCODE::DEBUG_PRINT:
+                    std::cout << static_cast<int64_t>(oStack.pop()) << "\n";
+                    //oStack.pop();
+                    break;
+                case OPCODE::DEBUG_PRINTF:
+                    std::cout << std::to_string(bit_cast<double>(oStack.pop())) << "\n";
+                    //oStack.pop();
+                    break;
+
+                default:
+                    throw std::runtime_error("Unknown opcode");
             }
         }
     }
-
 };

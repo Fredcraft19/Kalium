@@ -88,8 +88,8 @@ loadf64    ; loads float64 value
 Stores value at an address in vHeap, value and address gotten from oStack
 ```asm
 ; Push Order for address/value
-push VALUE
 push ADDRESS
+push VALUE
 
 heap-store32
 

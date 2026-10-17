@@ -113,11 +113,13 @@ namespace WispAOT
             {"not",             0x52},
 
 
-            {"u_f",             0x53},
-            {"s_f",             0x54},
+            {"cast-uf",         0x53},
+            {"cast-sf",         0x54},
 
-            {"f_u",             0x55},
-            {"f_s",             0x56},
+            {"cast-fu",         0x55},
+            {"cast-fs",         0x56},
+
+            {"pop",             0x57},
 
 
             {"print",           0xFE},

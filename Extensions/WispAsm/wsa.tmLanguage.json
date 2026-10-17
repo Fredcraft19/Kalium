@@ -1,0 +1,34 @@
+{
+  "scopeName": "source.wsa",
+  "patterns": [
+    {
+      "include": "#keywords"
+    },
+    {
+      "include": "#constants"
+    },
+    {
+      "include": "#comments"
+    }
+  ],
+  "repository": {
+    "keywords": {
+      "patterns": [{
+        "name": "keyword.control.wsa",
+        "match": "\\b(push|store[0-9]+[f\\*]?|load[a-z0-9]+|heap-store[a-z0-9]+|heap-load[a-z0-9]+|malloc|ref|free|call|ret|enter|jump(?:-[zn]z)?|add-[usf]|sub-[usf]|mul-[usf]|div-[usf]|safe-div-[usf]|[ne]ql-[usf]|gtr-[usf]|egtr-[usf]|les-[usf]|eles-[usf]|not|cast-[uf][fs]|print|printf|exit)\\b"
+      }]
+    },
+    "constants": {
+      "patterns": [{
+        "name": "string.quoted.other.wsa",
+        "match": "\\b(0x[0-9a-fA-F]+|[0-9]+(?:\\.[0-9]+)?[sf]?)\\b"
+      }]
+    },
+    "comments": {
+      "patterns": [{
+        "name": "comment.line.number-sign.wsa",
+        "match": "#.*$"
+      }]
+    }
+  }
+}

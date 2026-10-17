@@ -2,6 +2,7 @@
   "name": "wisp-assembly",
   "displayName": "Wisp Source Assembly",
   "version": "0.1.0",
+  "publisher": "Fredcraft",
   "engines": {
     "vscode": "^1.60.0"
   },
@@ -12,8 +13,7 @@
     "languages": [{
       "id": "wsa",
       "aliases": ["Wisp Source Assembly", "WSA"],
-      "extensions": [".wsa"],
-      "syntax": "./wsa.tmLanguage.json"
+      "extensions": [".wsa"]
     }],
     "grammars": [{
       "language": "wsa",

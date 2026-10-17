@@ -109,6 +109,7 @@ public:
                     return;
 
                 case OPCODE::PUSH_CONST: oStack.push(fetch<uint64_t>(bc, ip)); break;
+                case OPCODE::POP: oStack.pop(); break;
 
                 // Frame-relative stores
                 case OPCODE::STORE_8:   storeFrame<uint8_t>(bc, ip);  break;
@@ -422,6 +423,8 @@ public:
                     oStack.push(U);
                     break;
                 }
+
+                
 
                 case OPCODE::DEBUG_PRINT:
                     std::cout << static_cast<int64_t>(oStack.pop()) << "\n";

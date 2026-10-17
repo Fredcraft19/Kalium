@@ -123,7 +123,7 @@ heap-loads32    ; loads int32 value in heap
 heap-loads64    ; loads int64 value in heap
 heap-loadf32    ; loads float32 value in heap
 heap-loadf64    ; loads float64 value in heap
-
+```
 **MALLOC**
 
 Allocates memory in the vHeap

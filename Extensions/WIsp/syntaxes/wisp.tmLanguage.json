@@ -1,0 +1,34 @@
+{
+  "scopeName": "source.wisp",
+  "patterns": [
+    { "include": "#types" },
+    { "include": "#numbers" },
+    { "include": "#operators" }
+  ],
+  "repository": {
+    "types": {
+      "patterns": [{
+        "name": "storage.type.wisp",
+        "match": "\\b(uint8|uint16|uint32|uint64|int8|int16|int32|int64|float32|float64|bool|uint|int|float|void)\\b"
+      }]
+    },
+    "numbers": {
+      "patterns": [{
+        "name": "constant.numeric.wisp",
+        "match": "\\b[0-9]+(?:\\.[0-9]+)?f?\\b"
+      }]
+    },
+    "operators": {
+      "patterns": [
+        {
+          "name": "keyword.operator.arithmetic.wisp",
+          "match": "/\\?|[+\\-*/]"
+        },
+        {
+          "name": "keyword.operator.assignment.wisp",
+          "match": "="
+        }
+      ]
+    }
+  }
+}

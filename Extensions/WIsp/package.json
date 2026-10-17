@@ -1,0 +1,29 @@
+{
+  "name": "wisp-lang",
+  "displayName": "Wisp",
+  "version": "0.1.0",
+  "publisher": "Fredcraft",
+  "engines": {
+    "vscode": "^1.60.0"
+  },
+  "categories": [
+    "Programming Languages"
+  ],
+  "main": "./extension.js",
+  "activationEvents": [
+    "onLanguage:wisp"
+  ],
+  "contributes": {
+    "languages": [{
+      "id": "wisp",
+      "aliases": ["Wisp", "wisp"],
+      "extensions": [".wisp"],
+      "configuration": "./language-configuration.json"
+    }],
+    "grammars": [{
+      "language": "wisp",
+      "scopeName": "source.wisp",
+      "path": "./syntaxes/wisp.tmLanguage.json"
+    }]
+  }
+}

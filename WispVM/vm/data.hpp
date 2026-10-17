@@ -285,6 +285,9 @@ enum OPCODE : uint8_t {
     F_U             = 0x55,
     F_S             = 0x56,
 
+    // Pops value from oStack
+    POP             = 0x57,
+
     //// Bitwise Operators
     //AND             = 0x59,
     //OR              = 0x5A,

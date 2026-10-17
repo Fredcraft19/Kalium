@@ -9,12 +9,16 @@ namespace WispAOT
     public static class Assembler
     {
         private static List<byte> bytecode = new();
+        private static Dictionary<string, int> labels = new();
+        private static List<(int pos, string name, int line)> fixups =  new();
+        private static string errorMessage = "";
         private static void reset()
         {
             bytecode = new();
+            labels = new();
+            fixups =  new();
+            errorMessage = "";
         }
-
-        private static string errorMessage = "";
 
         /// <summary>
         /// Assembles assembly source into a fileName.wbc file
@@ -42,12 +46,15 @@ namespace WispAOT
             lines.Add(line);
             line = "";
 
+            // 1st pass, main assembly
+            
+
             for(int i = 0; i < lines.Count; i++)
             {
                 if(errorMessage.Length < 1)
                 {
                     // Clears whitespace and assembles it
-                    assembleLine( lines[i].Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
+                    assembleLine( lines[i].Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries), i);
                 }
                 else
                 {
@@ -60,7 +67,43 @@ namespace WispAOT
                     i = lines.Count;
                     bytecode = [0xFF];
                     timer.Stop();
+                    errorMessage = "";
                     return;
+                }
+            }
+
+            if(errorMessage.Length > 0)
+            {
+                Console.ForegroundColor = ConsoleColor.Red;
+                string lineNumber = lines.Count.ToString();
+                int padding = Math.Max(2, lineNumber.Length);
+                Console.WriteLine($"{lineNumber.PadLeft(padding)} | {lines[lines.Count-1]}");
+                Console.WriteLine($"{new string(' ', padding)} | {errorMessage}");
+                Console.ResetColor();
+                bytecode = [0xFF];
+                timer.Stop();
+                errorMessage = "";
+                return;
+            }
+
+            // 2nd pass -> Label jump/call value assignment
+
+            foreach(var (_pos,_name,_line) in fixups)
+            {
+                if (labels.ContainsKey(_name))
+                {
+                    byte[] data = BitConverter.GetBytes(labels[_name]);
+                    for(int i = 0; i < 4; i++) 
+                        bytecode[_pos+i] = data[i];
+                }
+                else
+                {
+                    Console.ForegroundColor = ConsoleColor.Red;
+                    string lineNumber = _line.ToString();
+                    int padding = Math.Max(2, lineNumber.Length);
+                    Console.WriteLine($"{lineNumber.PadLeft(padding)} | {lines[lines.Count-1]}");
+                    Console.WriteLine($"{new string(' ', padding)} | Label '{_name}' undefined");
+                    Console.ResetColor();
                 }
             }
 
@@ -71,18 +114,18 @@ namespace WispAOT
             Console.WriteLine($"Total Assembly Time: {timer.ElapsedMilliseconds}ms");
         }
 
-        private static void assembleLine(string[] asm)
+        private static void assembleLine(string[] asm, int lineNumber)
         {
             List<byte> bc = new();
 
-            if(asm.Length < 1)
-            {
-                return;
-            }
+            if(asm.Length < 1) return;
+
+            if(asm[0][0] == ';' || asm[0][0] == '#') return;
 
             if (BytecodeMap.bytecode.ContainsKey(asm[0]))
             {
                 // Its a command
+                int startIp = bytecode.Count;
                 oc command = (oc)BytecodeMap.bytecode[asm[0]];
                 bc.Add((byte)command);
 
@@ -105,9 +148,6 @@ namespace WispAOT
 
                     // Command requireing a uint32 hardcoded argument in bytecode
                     case oc.ENTER:
-                    case oc.JUMP:
-                    case oc.JUMPZ:
-                    case oc.JUMPNZ:
                     case oc.REF:
                     case oc.LOAD_F64:
                     case oc.LOAD_F32:
@@ -137,6 +177,35 @@ namespace WispAOT
                             }
                             break;
                         }
+
+                    case oc.JUMP:
+                    case oc.JUMPZ:
+                    case oc.JUMPNZ:
+                    case oc.CALL:
+                        {
+                            if (isNumber(asm[1]))
+                            {
+                                // Target Number
+                                byte[] data = handleNumber<uint>(asm[1]);
+                                bc = [..bc, ..data];
+                            }
+                            else
+                            {
+                                //  Target a label
+                                if (labels.ContainsKey(asm[1]))
+                                {
+                                    // label found!
+                                    byte[] data = BitConverter.GetBytes(labels[asm[1]]);
+                                    bc = [..bc, ..data];
+                                }
+                                else
+                                {
+                                    fixups.Add((bytecode.Count + bc.Count, asm[1], lineNumber));
+                                    bc = [..bc, 0x00, 0x00, 0x00, 0x00];
+                                }
+                            }
+                            break;
+                        }
                 }
 
                 bytecode = [..bytecode, ..bc];
@@ -146,12 +215,42 @@ namespace WispAOT
                 if(asm[0][asm[0].Length-1] == ':')
                 {
                     // Its a Label Declaration
-
+                    string lblName = asm[0].Substring(0, asm[0].Length-1);
+                    if (labels.ContainsKey(lblName))
+                    {
+                        errorMessage += $"Label '{lblName}' already exists at ip: '{labels[lblName]}'";
+                    }
+                    else
+                    {
+                        labels[lblName] = bytecode.Count;
+                    }
                 }
                 else
                 {
                     errorMessage += $"Unknown command or label declaration with '{asm[0]}'.";
                 }
+            }
+        }
+
+        private static bool isNumber(string value)
+        {
+            if(value.Length > 1)
+            {
+                if (char.IsNumber(value[value.Length - 1]))
+                {
+                    return long.TryParse(value, out var _) || ulong.TryParse(value, out var _) || double.TryParse(value, out var _);
+                }
+                else
+                {
+                    value = value.Substring(0, value.Length-1);
+                    return long.TryParse(value, out var _) || ulong.TryParse(value, out var _) || double.TryParse(value, out var _);
+                }
+            }
+            else
+            {
+                if(string.IsNullOrWhiteSpace(value)) return false;
+
+                return char.IsNumber(value[0]);
             }
         }
 

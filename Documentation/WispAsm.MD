@@ -1,7 +1,7 @@
 # Wisp Assembly Documentation
 ## Notes
 * Sorry for the colors messed up in the examples.. They should look 'okay' still
-* If you want to code in wisp source assembly, I recommend getting the WispAsm Color Extension here [](../../Extensions)
+* If you want to code in wisp source assembly, I recommend getting the [WispAsm Color Extension](../../Extensions)
 * Only Push command uses 'f' and 's' to tell the type of the value. All other commands are uint so you dont need ints or floats. It will refuse to assemble with the wrong types
 ## Abreviations
 * 'oStack' is the Operation Stack

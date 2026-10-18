@@ -30,6 +30,17 @@ namespace WispAOT
             {"loadf32",         0x16},
             {"loadf64",         0x17},
 
+            {"loadu8*",          0x58},
+            {"loadu16*",         0x59},
+            {"loadu32*",         0x5A},
+            {"loadu64*",         0x5B},
+            {"loads8*",          0x5C},
+            {"loads16*",         0x5D},
+            {"loads32*",         0x5E},
+            {"loads64*",         0x5F},
+            {"loadf32*",         0x60},
+            {"loadf64*",         0x61},
+
             {"heap-store8",     0x18},
             {"heap-store16",    0x19},
             {"heap-store32",    0x1A},

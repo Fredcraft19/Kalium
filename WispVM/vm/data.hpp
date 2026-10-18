@@ -288,6 +288,17 @@ enum OPCODE : uint8_t {
     // Pops value from oStack
     POP             = 0x57,
 
+    LOAD_ADDR_U8    = 0x58,
+    LOAD_ADDR_U16   = 0x59,
+    LOAD_ADDR_U32   = 0x5A,
+    LOAD_ADDR_U64   = 0x5B,
+    LOAD_ADDR_S8    = 0x5C,
+    LOAD_ADDR_S16   = 0x5D,
+    LOAD_ADDR_S32   = 0x5E,
+    LOAD_ADDR_S64   = 0x5F,
+    LOAD_ADDR_F32   = 0x60,
+    LOAD_ADDR_F64   = 0x61,
+
     //// Bitwise Operators
     //AND             = 0x59,
     //OR              = 0x5A,

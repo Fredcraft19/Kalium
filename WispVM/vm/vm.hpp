@@ -69,6 +69,17 @@ private:
         uint64_t address = oStack.pop();
         vStack.write(address, static_cast<F>(popDouble()));
     }
+    // Load from stack address (not frame relative)
+    template <typename T>
+    static void loadAddr() {
+        uint64_t address = oStack.pop();
+        oStack.push(static_cast<uint64_t>(vStack.read<T>(address)));
+    }
+    template <typename F>
+    static void loadAddrF() {
+        uint64_t address = oStack.pop();
+        pushDouble(static_cast<double>(vStack.read<F>(address)));
+    }
 
     // vHeap helpers
     template <typename T>
@@ -138,6 +149,18 @@ public:
                 case OPCODE::LOAD_S64: loadFrame<int64_t>(bc, ip);  break;
                 case OPCODE::LOAD_F32: loadFrameF<float>(bc, ip);   break;
                 case OPCODE::LOAD_F64: loadFrameF<double>(bc, ip);  break;
+
+                // Load from Stack Address
+                case OPCODE::LOAD_ADDR_U8:  loadAddr<uint8_t>(); break;
+                case OPCODE::LOAD_ADDR_U16: loadAddr<uint16_t>(); break;
+                case OPCODE::LOAD_ADDR_U32: loadAddr<uint32_t>(); break;
+                case OPCODE::LOAD_ADDR_U64: loadAddr<uint64_t>(); break;
+                case OPCODE::LOAD_ADDR_S8:  loadAddr<int8_t>(); break;
+                case OPCODE::LOAD_ADDR_S16: loadAddr<int16_t>(); break;
+                case OPCODE::LOAD_ADDR_S32: loadAddr<int32_t>(); break;
+                case OPCODE::LOAD_ADDR_S64: loadAddr<int64_t>(); break;
+                case OPCODE::LOAD_ADDR_F32: loadAddrF<float>(); break;
+                case OPCODE::LOAD_ADDR_F64: loadAddrF<double>(); break;
 
                 // Heap
                 case OPCODE::HSTORE_8:   hstore<uint8_t>();  break;

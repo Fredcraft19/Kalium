@@ -23,7 +23,7 @@ namespace WispAOT
 
         public class LiteralNode : ExpressionNode
         {
-            public object? value;
+            public string? value;
             public DT? type;
         }
 
@@ -34,6 +34,7 @@ namespace WispAOT
             public ExpressionNode? left;
             public Token? oper;
             public ExpressionNode? right;
+            public VariableData? operandType; 
         }
 
         public class VariableReferenceNode : ExpressionNode
@@ -53,6 +54,60 @@ namespace WispAOT
             public string variableName = "";
             public ExpressionNode? expression;
             public uint offset;
+        }
+        public class VariableReassignNode : DeclareVariableNode
+        {
+            public VariableData? varType;
+        }
+
+        public class IfNode : Node
+        {
+            public ExpressionNode? expression;
+            public List<Node> body = new();
+            public List<Node> elseBody = new();
+        }
+
+        public class WhileNode : Node
+        {
+            public ExpressionNode? expression;
+            public List<Node> body = new();
+        }
+
+        public class ForNode : Node
+        {
+            public ExpressionNode? expression;
+            public DeclareVariableNode? init;
+            public VariableReassignNode? step;
+            public List<Node> body = new();
+        }
+
+        public class MethodDeclarationNode : Node
+        {
+            public string returnType = "";
+            public string methodName = "";
+            public List<(string paremName, VariableData paremData)> parameters = new();
+            public uint stackSize = 0; 
+            public List<Node> body = new();
+        }
+        public class CallNode : ExpressionNode
+        {
+            public string name = "";
+            public List<ExpressionNode> args = new();
+        }
+
+        public class ExpressionStatementNode : Node
+        {
+            public ExpressionNode? expression;
+        }
+
+        public class ReturnNode : Node
+        {
+            public ExpressionNode? expression;
+        }
+
+        public class PointerTypeNode : TypeNode
+        {
+            public TypeNode pointeeType = null!;
         }
     }
 

@@ -2,7 +2,7 @@ namespace WispAOT
 {
     public static class Tokeniser
     {
-        public static void Tokenise(ref List<Token> tokens, string source)
+        public static void Tokenise(ref List<Token> tokens, string source, bool log = false)
         {
             string word = "";
             
@@ -25,7 +25,21 @@ namespace WispAOT
 
                     case '=':
                         flushWord(ref word, ref tokens);
-                        tokens.Add(new Token{type = TokenType.Equals, value="="});
+                        Token lastToken = tokens[tokens.Count-1];
+                        if(lastToken.type == TokenType.Operator)
+                        {
+                            lastToken.value += "=";
+                        }
+                        else if(lastToken.type == TokenType.Equals)
+                        {
+                            lastToken.type = TokenType.Operator;
+                            lastToken.value = "==";
+                        }
+                        else
+                        {
+                            tokens.Add(new Token{type = TokenType.Equals, value="="});
+                        }
+                        
                         break;
 
                     case '(':
@@ -56,6 +70,14 @@ namespace WispAOT
                         else tokens.Add(new Token { type = TokenType.Operator, value = "/" });
                         break;
 
+                    case ',':
+                        flushWord(ref word, ref tokens);
+                        tokens.Add(new Token{type = TokenType.Comma, value = ","});
+                        break;
+
+                    case '!':
+                    case '>':
+                    case '<':
                     case '*':
                     case '-':
                     case '+':
@@ -74,9 +96,12 @@ namespace WispAOT
                 }
             }
 
-            foreach(Token tok in tokens)
+            if (log)
             {
-                Console.WriteLine($"{tok.type}('{tok.value}')");
+                for(int i = 0; i < tokens.Count; i++)
+                {
+                    Console.WriteLine($"{i}: {tokens[i].type}({tokens[i].value})");
+                }
             }
 
             tokens.Add(new Token{type=TokenType.END,value="END"});
@@ -106,6 +131,10 @@ namespace WispAOT
             else if(word[word.Length-1] == 'f' && float.TryParse(word.Substring(0, word.Length-1), out var _))
             {
                 output = new Token {type = TokenType.Float, value=word.Substring(0, word.Length-1)};
+            }
+            else if(word == "true" || word == "false")
+            {
+                output = new Token{type=TokenType.Boolean, value=word};
             }
             // Word is idenitfyer
             else if(!char.IsNumber(word[0]))

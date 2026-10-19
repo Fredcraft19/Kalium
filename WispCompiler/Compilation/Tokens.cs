@@ -16,9 +16,12 @@ namespace WispAOT
         Equals,
         Float,
         Integer,
+        Boolean,
         Operator,
         SemiColon,
 
+        Comma,
+        
 
         OpenBracket,
         CloseBracket,

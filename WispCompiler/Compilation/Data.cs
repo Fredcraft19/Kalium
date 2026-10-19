@@ -18,13 +18,20 @@ namespace WispAOT
             {"float64",     new VariableData{bytes=8, type=DT.Float}},
 
             // 'Shortcut' data types -> Copies with easier names
-            {"bool",        new VariableData{bytes=1, type=DT.Uint}},
+            {"bool",        new VariableData{bytes=1, type=DT.Bool}},
 
             {"uint",        new VariableData{bytes=4, type=DT.Uint}},
             {"int",         new VariableData{bytes=4, type=DT.Int}},
             {"float",       new VariableData{bytes=4, type=DT.Float}},
 
             {"void", new VariableData{bytes=0, type=DT.Void}}
+        };
+
+        public static VariableData MakePointer(VariableData pointee) => new()
+        {
+            bytes = 8,
+            type = DT.Pointer,
+            pointeeType = pointee
         };
 
         public static Dictionary<string, VariableData> customTypes = new()
@@ -34,24 +41,53 @@ namespace WispAOT
 
         public static List<string> keywords = new()
         {
-            // i wish...
             "if",
+            "else",
             "while",
-            "return",
-            "class",
-            "struct"
+            "for",
+            "return"
         };
+        public static void PrintToken(Token tok)
+        {
+            Console.WriteLine($"{tok.type}('{tok.value}')");
+        }
+        public static string FormatToken(Token tok)
+        {
+            return $"{tok.type}('{tok.value}')";
+        }
     }
     public class VariableData
     {
         public uint bytes;
         public DT type;
+        public bool isPointer = false;
+        public VariableData? pointeeType = null;
     }
     public enum DT
     {
         Uint,
         Int,
         Float,
-        Void
+        Bool,
+        Void,
+
+        Pointer
+    }
+
+    public class CompilerSettings
+    {
+        public bool Log = false;
+        public bool PrettyPrintAssembly = false;
+    }
+
+    public class Symbol
+    {
+        public VariableData type = null!;
+        public uint offset;
+    }
+    public class MethodData
+    {
+        public VariableData returnType = null!;
+        public List<(string name, VariableData data)> parameters = new();
     }
 }

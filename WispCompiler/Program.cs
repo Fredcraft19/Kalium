@@ -6,7 +6,7 @@ bool fullCompile = true;
 
 CompilerSettings settings = new CompilerSettings
 {
-    Log = false,
+    Debug = true,
     PrettyPrintAssembly = true
 };
 

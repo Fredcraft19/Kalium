@@ -36,6 +36,18 @@ private:
     static double popDouble() { return bit_cast<double>(oStack.pop()); }
     static void pushDouble(double d) { oStack.push(bit_cast<uint64_t>(d)); }
 
+    // address/pointer helpers
+    static constexpr uint64_t heap_bit = 1ULL << 63;
+    template <typename T>
+    static T readMem(uint64_t a) {
+        return (a & heap_bit) ? vHeap.read<T>(a & ~heap_bit) : vStack.read<T>(a);
+    }
+    template <typename T>
+    static void writeMem(uint64_t a, const T& v) {
+        if (a & heap_bit) vHeap.write(a & ~heap_bit, v);
+        else vStack.write(a, v);
+    }
+
     // vstack helpers
 
     template <typename T>   // ints
@@ -62,26 +74,26 @@ private:
     template <typename T>
     static void storeAddr() {
         uint64_t address = oStack.pop();
-        vStack.write(address, static_cast<T>(oStack.pop()));
+        writeMem(address, static_cast<T>(oStack.pop()));
     }
     template <typename F>
     static void storeAddrF() {
         uint64_t address = oStack.pop();
-        vStack.write(address, static_cast<F>(popDouble()));
+        writeMem(address, static_cast<F>(popDouble()));
     }
-    // Load from stack address (not frame relative)
     template <typename T>
     static void loadAddr() {
         uint64_t address = oStack.pop();
-        oStack.push(static_cast<uint64_t>(vStack.read<T>(address)));
+        oStack.push(static_cast<uint64_t>(readMem<T>(address)));
     }
     template <typename F>
     static void loadAddrF() {
         uint64_t address = oStack.pop();
-        pushDouble(static_cast<double>(vStack.read<F>(address)));
+        pushDouble(static_cast<double>(readMem<F>(address)));
     }
 
     // vHeap helpers
+
     template <typename T>
     static void hstore() {
         uint64_t address = oStack.pop();
@@ -182,7 +194,7 @@ public:
                 case OPCODE::HLOAD_F64: hloadF<double>();  break;
 
                 case OPCODE::MALLOC:
-                    oStack.push(vHeap.allocate(static_cast<size_t>(oStack.pop())));
+                    oStack.push(vHeap.allocate(static_cast<size_t>(oStack.pop())) | heap_bit);
                     break;
 
                 case OPCODE::FREE:

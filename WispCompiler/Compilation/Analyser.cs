@@ -1,4 +1,8 @@
+using System.Linq.Expressions;
+using System.Reflection;
+using System.Runtime.CompilerServices;
 using System.Runtime.Intrinsics.X86;
+using WispAOT.Nodes;
 
 namespace WispAOT
 {
@@ -6,6 +10,7 @@ namespace WispAOT
     {
         private static Dictionary<string, Symbol> variables = new();
         private static Dictionary<string, MethodData> methods = new();
+        private static Dictionary<string, CustomObject> objects = new();
         public static Dictionary<string, uint> methodStackSizes = new();
         private static string currentMethod = "";
 
@@ -19,9 +24,14 @@ namespace WispAOT
             // first pass. register signature
             foreach (Node node in nodes)
             {
+                if(node is ObjectDeclareNode)
+                {
+                    analyseObjectDeclaration((ObjectDeclareNode)node);
+                    continue;
+                }
                 if (node is not Nodes.MethodDeclarationNode m)
                 {
-                    Error.Log("Only method declarations are allowed at the top level for now");
+                    Error.Log($"Only method declarations are allowed at the top level for now insead of '{node.GetType().Name}'");
                     return;
                 }
                 if (methods.ContainsKey(m.methodName))
@@ -42,7 +52,7 @@ namespace WispAOT
             foreach (Node node in nodes)
             {
                 if (Error.hasError) return;
-                analyseMethodDeclaration((Nodes.MethodDeclarationNode)node);
+                if(node is MethodDeclarationNode) analyseMethodDeclaration((MethodDeclarationNode)node);
             }
         }
 
@@ -77,6 +87,15 @@ namespace WispAOT
                 case Nodes.ReturnNode returnNode:
                     analyseReturnStatement(returnNode);
                     break;
+                case DeleteStatement deleteNode:
+                    analyseDeleteStatement(deleteNode);
+                    break;
+                case IndexAssignNode indexAssign:
+                    analyseIndexAssignment(indexAssign);
+                    break;
+                case ObjectDeclareNode objDecl:
+                    analyseObjectDeclaration(objDecl);
+                    break;
                 case NullNode:
                     Error.Log("NullNode found by analyser. a silent error occured?");
                     break;
@@ -86,53 +105,166 @@ namespace WispAOT
             }
         }
 
-        private static void analyseDeclaration(Nodes.DeclareVariableNode declare)
+        private static bool objectHasMember(List<ObjectVariable> vars, string name)
+        {
+            foreach(var member in vars)
+                if(member.name == name) return true;
+            return false;
+        }
+        private static uint getObjectOffset(List<ObjectVariable> vars, uint baseOffset)
+        {
+            foreach(var member in vars)
+            {
+                baseOffset += member.offset;
+            }
+            return baseOffset;
+        }
+
+        private static void analyseObjectDeclaration(ObjectDeclareNode objectNode)
+        {
+            string className = objectNode.name!;
+            if (objects.ContainsKey(className))
+            {
+                Error.Log($"Type '{className}' already exists");
+                return;
+            }
+
+            List<ObjectVariable> objectVariables = new();
+
+            uint offset = 0;
+
+            foreach(Node node in objectNode.body)
+            {
+                if(node is DeclareVariableNode variable)
+                {
+                    if(variable.expression != null)
+                    {
+                        Error.Log($"Variable cant have an initialiser yet");
+                        return;
+                    }
+                    if (objectHasMember(objectVariables, variable.variableName))
+                    {
+                        Error.Log("Variables in an object cannot share the same name");
+                        return;
+                    }
+
+                    VariableData type = analyseTypeNode(variable.type!);
+                    if(type.type == DT.Void)
+                    {
+                        Error.Log($"Member '{variable.variableName}' cannot be type void");
+                        return;
+                    }
+
+                    objectVariables.Add(new ObjectVariable {
+                        name = variable.variableName,
+                        type = type,
+                        offset = offset
+                    });
+                    offset += type.bytes;  
+                }
+                else if(node is MethodDeclarationNode)
+                {
+                    Error.Log("Method declaration inside a class/struct is not supported yet", ConsoleColor.DarkMagenta);   
+                    return;
+                }
+                else
+                {
+                    Error.Log($"Unsupported node type of '{node.GetType().Name}' in a class/struct");
+                    return;
+                }
+            }
+
+            if (Settings.Debug)
+            {
+                Console.WriteLine($"object {className} ({objectNode.totalBytes}):");
+                foreach(ObjectVariable objVar in objectVariables)
+                {
+                    Console.WriteLine($"    ({objVar.offset}): {objVar.name}");
+                }
+                
+            }
+
+            objectNode.totalBytes = offset;
+
+            objects[className] = new CustomObject {
+                totalMemory = offset,
+                variables = objectVariables
+            };
+
+        }
+
+        private static DeclareVariableNode analyseDeclaration(Nodes.DeclareVariableNode declare, bool inClass = false)
         {
             string name = declare.variableName;
 
-            if (variables.ContainsKey(name))
-            {
-                Error.Log($"Variable '{name}' already exists");
-                return;
-            }
-            if (declare.type is not Nodes.PrimitiveTypeNode t)
-            {
-                Error.Log("Unsupported custom data type for variable declaration");
-                return;
+            if(!inClass){
+                if (variables.ContainsKey(name))
+                {
+                    Error.Log($"Variable '{name}' already exists");
+                    return new DeclareVariableNode();
+                }
             }
 
-            VariableData declared = Data.primativeTypes[t.value];
+            VariableData declared = analyseTypeNode(declare.type!);
             if (declared.type == DT.Void)
             {
                 Error.Log($"Variable '{name}' cannot be of type void");
-                return;
+                return new DeclareVariableNode();;
             }
 
             if (declare.expression != null)
             {
-                ExpressionNode? value = analyseAndCoerce(declare.expression, declared, t.value);
+                if (declared.isReference)
+                {
+                    if (declare.expression is not Nodes.VariableReferenceNode)
+                    {
+                        Error.Log("Reference must be initialized with a variable reference");
+                        return new DeclareVariableNode();;
+                    }
+
+                    declare.expression = new Nodes.UnaryExpressionNode 
+                    { 
+                        oper = new Token { type = TokenType.Operator, value = "&" }, 
+                        operand = declare.expression,
+                        resolvedType = declared
+                    };
+                }
+                
+                ExpressionNode? value = analyseAndCoerce(declare.expression, declared, declare.type!.ToString()!);
                 if (value != null) declare.expression = value;
             }
 
-            // ignore errors that could have happened. To avoid 'undeclared' errors
+            if(inClass)
+            {
+                return declare;
+            }
+
             declare.offset = methodStackSizes[currentMethod];
             variables[name] = new Symbol { type = declared, offset = declare.offset };
             methodStackSizes[currentMethod] += declared.bytes;
+
+            return declare;
         }
-        private static void analyseReassignment(Nodes.VariableReassignNode res)
+        private static void analyseReassignment(VariableReassignNode res)
         {
             if (!variables.TryGetValue(res.variableName, out Symbol? sym))
             {
                 Error.Log($"Variable '{res.variableName}' does not exist or is out of scope");
                 return;
             }
+            if (res.isIndirect && sym.type.type != DT.Pointer)
+            {
+                Error.Log($"Cannot dereference '{res.variableName}': it is not a pointer");
+                return;
+            }
 
             res.offset = sym.offset;
             res.varType = sym.type;
 
-            ExpressionNode? value = analyseAndCoerce(res.expression!, sym.type , nameof(sym.type));
-            if( value != null) res.expression= value;
+            VariableData targetType = (res.isIndirect || sym.type.isReference) ? sym.type.pointeeType! : sym.type;
 
+            ExpressionNode? value = analyseAndCoerce(res.expression!, targetType, nameOf(targetType));
+            if (value != null) res.expression = value;
         }
 
         private static void analyseIfStatement(Nodes.IfNode ifNode)
@@ -206,11 +338,17 @@ namespace WispAOT
             }
 
             methodStackSizes[m.methodName] = offset;
-
+            bool hasReturn = false;
             foreach (Node node in m.body)
             {
                 if (Error.hasError) return;
                 analyseNode(node);
+                if (node is ReturnNode) hasReturn = true;
+            }
+
+            if(m.returnType != "void" && !hasReturn)
+            {
+                Error.Log("A method with a return type must have a return statement");
             }
 
             m.stackSize = methodStackSizes[m.methodName];
@@ -249,11 +387,33 @@ namespace WispAOT
                 return call;
             }
 
-            for(int i = 0; i < call.args.Count; i++)
+            for (int i = 0; i < call.args.Count; i++)
             {
-                var parem = target.parameters[i];
-                var arg = analyseAndCoerce(call.args[i], parem.data, nameOf(parem.data));
-                if(arg != null) call.args[i] = arg;
+                var param = target.parameters[i];
+                ExpressionNode arg = call.args[i];
+
+                if (param.data.isReference)
+                {
+                    arg = analyseExpression(arg);
+                    if (arg is not Nodes.VariableReferenceNode)
+                    {
+                        Error.Log($"Cannot pass a non-lvalue expression to reference parameter '{param.name}'");
+                        return call;
+                    }
+                    arg = new Nodes.UnaryExpressionNode
+                    {
+                        oper = new Token { type = TokenType.Operator, value = "&" },
+                        operand = arg,
+                        resolvedType = param.data
+                    };
+                }
+                else
+                {
+                    var coercedArg = analyseAndCoerce(arg, param.data, nameOf(param.data));
+                    if (coercedArg != null) arg = coercedArg;
+                }
+
+                call.args[i] = arg;
             }
 
             call.resolvedType = target.returnType;
@@ -276,7 +436,27 @@ namespace WispAOT
             }
         }
 
-        // ssets resolvedType so it stays null if there was an error.
+        private static VariableData analyseTypeNode(TypeNode typeNode)
+        {
+            if (typeNode is Nodes.PrimitiveTypeNode p)
+            {
+                return Data.primativeTypes[p.value];
+            }
+            if (typeNode is Nodes.PointerTypeNode ptr)
+            {
+                VariableData pointee = analyseTypeNode(ptr.pointeeType);
+                return Data.MakePointer(pointee);
+            }
+            if (typeNode is Nodes.ReferenceTypeNode refNode)
+            {
+                VariableData pointee = analyseTypeNode(refNode.pointeeType);
+                return Data.MakeReference(pointee);
+            }
+            Error.Log("Unknown type node representation");
+            return Data.primativeTypes["int"];
+        }
+
+        // sets resolvedType so it stays null if there was an error.
         private static ExpressionNode analyseExpression(ExpressionNode expr)
         {
             switch (expr)
@@ -327,10 +507,103 @@ namespace WispAOT
                 case Nodes.CallNode call:
                     return analyseMethodCall(call);
 
+                case Nodes.UnaryExpressionNode u:
+                {
+                    u.operand = analyseExpression(u.operand!);
+                    if (u.oper!.value == "&")
+                    {
+                        if (u.operand is not Nodes.VariableReferenceNode)
+                        {
+                            Error.Log("Cannot take the address of a non-lvalue expression");
+                            return u;
+                        }
+                        u.resolvedType = Data.MakePointer(u.operand.resolvedType!);
+                    }
+                    else if (u.oper!.value == "*")
+                    {
+                        if (u.operand.resolvedType!.type != DT.Pointer)
+                        {
+                            Error.Log("Cannot dereference a non-pointer type");
+                            return u;
+                        }
+                        u.resolvedType = u.operand.resolvedType!.pointeeType;
+                    }
+                    return u;
+                }
+                case NewStatement New:
+                    return analyseNewStatement(New);
+
+                case IndexNode Index:
+                    {
+                        Index.baseExpression = analyseExpression(Index.baseExpression!);
+                        Index.indexExpression = analyseExpression(Index.indexExpression!);
+                        var baseType = Index.baseExpression.resolvedType;
+                        var indexType = Index.indexExpression.resolvedType;
+                        if(baseType == null || indexType == null)
+                        {
+                            return Index;
+                        }
+
+                        if(baseType.type != DT.Pointer)
+                        {
+                            Error.Log($"Cannot index to '{nameOf(baseType)}' because its not a pointrer");
+                            return Index;
+                        }
+
+                        if(indexType.type != DT.Int && indexType.type != DT.Uint)
+                        {
+                            Error.Log($"Array indexes are integer.");
+                            return Index;
+                        }
+
+                        Index.resolvedType = baseType.pointeeType;
+                        return Index;
+                    }
+
                 default:
                     Error.Log($"Unsupported expression '{expr.GetType().Name}'");
                     return expr;
             }
+        }
+
+        private static NewStatement analyseNewStatement(NewStatement newS)
+        {
+            // im sure its safe and that...
+            newS.resolvedType = Data.MakePointer(newS.data!);
+
+            if (newS.count != null)
+            {
+                newS.count = analyseExpression(newS.count);
+                var ct = newS.count.resolvedType;
+                if (ct != null && ct.type != DT.Int && ct.type != DT.Uint) Error.Log("The size in 'new TYPE[size]' must be an integer");
+            }
+
+            return newS;
+        }
+        private static void analyseDeleteStatement(DeleteStatement deleteS)
+        {
+            string ptrName = deleteS.deletedPointer!;
+            if (!variables.ContainsKey(ptrName))
+            {
+                Error.Log($"Pointer '{ptrName}' does not exist");
+                return;
+            }
+            if (!variables[ptrName].type.isPointer)
+            {
+                Error.Log($"Variable '{ptrName}' is not a pointer. You can only delete pointers that are pointing to the heap");
+            }
+
+            deleteS.pointerAddress = variables[ptrName].offset;
+        }
+
+        private static void analyseIndexAssignment(IndexAssignNode indexAssign)
+        {
+            IndexNode target = (IndexNode) analyseExpression(indexAssign.target!);
+            indexAssign.target = target;
+            if(target.resolvedType == null) return;
+
+            ExpressionNode value = analyseAndCoerce(indexAssign.expression!, target.resolvedType, nameOf(target.resolvedType))!;
+            if (value != null) indexAssign.expression = value;
         }
 
         private static void pushScope()
@@ -355,11 +628,20 @@ namespace WispAOT
             return find(width, unsigned ? DT.Uint : DT.Int);
         }
 
+        // readability + future understanding < small
+        private static bool SamePointee(VariableData a, VariableData b) => a.pointeeType!.type == b.pointeeType!.type && a.pointeeType.bytes == b.pointeeType.bytes && (a.pointeeType.type != DT.Pointer || SamePointee(a.pointeeType, b.pointeeType));
+
         private static ExpressionNode? coerce(ExpressionNode e, VariableData target)
         {
             VariableData from = e.resolvedType!;
 
             if (from.type == DT.Void || target.type == DT.Void) return null;
+
+            if (from.type == DT.Pointer || target.type == DT.Pointer)
+            {
+                if (target.type == DT.Pointer && e is Nodes.LiteralNode { value: "0" }) return e;
+                return (from.type == DT.Pointer && target.type == DT.Pointer && SamePointee(from, target)) ? e : null;
+            }
 
             if(target.type == DT.Bool){
                 if(from.type == DT.Bool) return e;
@@ -370,6 +652,7 @@ namespace WispAOT
                     literal.resolvedType = target;
                     return literal;
                 }
+                return null;
             }
 
             bool fromFloat = from.type == DT.Float;

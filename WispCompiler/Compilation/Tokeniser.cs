@@ -2,13 +2,37 @@ namespace WispAOT
 {
     public static class Tokeniser
     {
-        public static void Tokenise(ref List<Token> tokens, string source, bool log = false)
+        public static void Tokenise(ref List<Token> tokens, string source)
         {
             string word = "";
+            bool inQuote = false;
             
             for(int i = 0; i < source.Length; i++)
             {
                 char ch = source[i];
+
+                if (inQuote && ch != '"')
+                {
+                    word += ch;
+                    continue;
+                }
+
+                if(ch == '"')
+                {
+                    if (inQuote)
+                    {
+                        tokens.Add(new Token{type = TokenType.String, value = word});
+                        Console.WriteLine($"string:'{word}'");
+                        word = "";
+                    }
+                    else
+                    {
+                        flushWord(ref word, ref tokens);
+                    }
+                    inQuote = !inQuote;
+                    continue;
+                }
+                
 
                 switch (ch)
                 {
@@ -60,7 +84,25 @@ namespace WispAOT
                         tokens.Add(new Token{type = TokenType.CloseCurlyBracket, value="}"});
                         break;
 
+                    case '[':
+                        flushWord(ref word, ref tokens);
+                        tokens.Add(new Token{type = TokenType.OpenSquareBracket, value = "["});
+                        break;
+                    case ']':
+                        flushWord(ref word, ref tokens);
+                        tokens.Add(new Token{type = TokenType.CloseSquareBracket, value = "]"});
+                        break;
+
                     case '/':
+                        if (i + 1 < source.Length && source[i + 1] == '/')
+                        {
+                            i += 2;
+                            while (i < source.Length && source[i] != '\n')
+                            {
+                                i++;
+                            }
+                            break;
+                        }
                         flushWord(ref word, ref tokens);
                         if (i + 1 < source.Length && source[i + 1] == '?')
                         {
@@ -74,7 +116,13 @@ namespace WispAOT
                         flushWord(ref word, ref tokens);
                         tokens.Add(new Token{type = TokenType.Comma, value = ","});
                         break;
+                    case '.':
+                        flushWord(ref word, ref tokens);
+                        tokens.Add(new Token{type = TokenType.Dot, value = "."});
+                        break;
 
+                    case '&':
+                    case '|':
                     case '!':
                     case '>':
                     case '<':
@@ -96,7 +144,7 @@ namespace WispAOT
                 }
             }
 
-            if (log)
+            if (Settings.Debug)
             {
                 for(int i = 0; i < tokens.Count; i++)
                 {

@@ -29,17 +29,26 @@ namespace WispAOT
             string typeValue = advance().value;
             TypeNode baseType = new PrimitiveTypeNode { value = typeValue };
 
-            if (check(TokenType.Operator) && peek().value == "*")
+            // pointer
+            while (check(TokenType.Operator) && peek().value == "*")
             {
                 advance();
-                return new PointerTypeNode { pointeeType = baseType };
+                baseType = new PointerTypeNode { pointeeType = baseType };
             }
+
+            // reference
+            if (check(TokenType.Operator) && peek().value == "&")
+            {
+                advance();
+                baseType = new ReferenceTypeNode { pointeeType = baseType };
+            }
+
             return baseType;
         }
         private static Node parseStatement()
         {
             if (check(TokenType.Type)) return parseVariableDeclaration();
-            else if (check(TokenType.Identifyer)) return parseVariableReassignment();
+            else if (check(TokenType.Identifyer) || (check(TokenType.Operator) && peek().value == "*")) return parseVariableReassignment();
             else if (check(TokenType.Keyword)) return parseKeywordStatement();
 
             Error.Log($"Unexpected token '{Data.FormatToken(peek())}'");
@@ -55,7 +64,7 @@ namespace WispAOT
             if (check(TokenType.Operator) && peek().value is "==" or "!=" or "<" or ">" or "<=" or ">=")
             {
                 Token op = advance();
-                left = new Nodes.BinaryExpressionNode { left = left, oper = op, right = parseAddition() };
+                left = new BinaryExpressionNode { left = left, oper = op, right = parseAddition() };
             }
             return left;
         }
@@ -66,7 +75,7 @@ namespace WispAOT
             while (check(TokenType.Operator) && (peek().value == "+" || peek().value == "-") && !Error.hasError)
             {
                 Token op = advance();
-                left = new Nodes.BinaryExpressionNode { left = left, oper = op, right = parseMultiplication() };
+                left = new BinaryExpressionNode { left = left, oper = op, right = parseMultiplication() };
             }
             return left;
         }
@@ -77,16 +86,35 @@ namespace WispAOT
             while (check(TokenType.Operator) && (peek().value == "*" || peek().value == "/" || peek().value == "/?")&& !Error.hasError)
             {
                 Token op = advance();
-                left = new Nodes.BinaryExpressionNode { left = left, oper = op, right = parsePrimary() };
+                left = new BinaryExpressionNode { left = left, oper = op, right = parsePrimary() };
             }
             return left;
         }
         private static ExpressionNode parsePrimary()
         {
+            ExpressionNode expr = parseAtom();
+
+            while (match(TokenType.OpenSquareBracket) != null)
+            {
+                ExpressionNode index = parseExpression();
+                if (match(TokenType.CloseSquareBracket) == null)
+                    Error.Log("Expected ']' after the index");
+                expr = new IndexNode { baseExpression = expr, indexExpression = index };
+            }
+            return expr;
+        }
+        private static ExpressionNode parseAtom()
+        {
+            if (check(TokenType.Operator) && (peek().value == "*" || peek().value == "&"))
+            {
+                Token op = advance();
+                ExpressionNode operand = parsePrimary();
+                return new UnaryExpressionNode { oper = op, operand = operand };
+            }
+
             if (match(TokenType.Integer) != null) return new LiteralNode { value = tokens[current - 1].value, type = DT.Int };
             if (match(TokenType.Boolean) != null) return new LiteralNode { value = tokens[current - 1].value, type = DT.Bool };
-            if (match(TokenType.Float) != null)   return new LiteralNode { value = tokens[current - 1].value, type = DT.Float };
-
+            if (match(TokenType.Float) != null) return new LiteralNode { value = tokens[current - 1].value, type = DT.Float };
             if (check(TokenType.Identifyer) && tokens[current + 1].type == TokenType.OpenBracket)
             {
                 string name = advance().value;
@@ -104,29 +132,77 @@ namespace WispAOT
                     Error.Log("Expected ')' to close the expression");
                 return expr;
             }
-            
+
+            if(check(TokenType.Keyword))
+            {
+                string keyword = peek().value;
+                if(keyword == "new")
+                {
+                    advance(); // consume 'new'
+                    if (check(TokenType.Type))
+                    {
+                        string dataType = peek().value;
+                        advance(); // consume type
+                        ExpressionNode? count = null;
+                        if (!Data.primativeTypes.ContainsKey(dataType))
+                        {
+                            Error.Log("Unrecognised type for 'new'. Custom types aren't supported");
+                            return new LiteralNode{value = "0", type = DT.Uint};  // basically 'nullptr' (even though this will never compile)
+                        }
+                        
+                        if (match(TokenType.OpenSquareBracket) != null)
+                        {
+                            count = parseExpression();
+                            if (match(TokenType.CloseSquareBracket) == null)
+                                Error.Log("Expected ']' after the array size");
+                        }
+                        return new NewStatement { data = Data.primativeTypes[dataType], count = count };
+                    }
+                    else
+                    {
+                        Error.Log("Expected a type for 'new'.");
+                    }
+                }
+                else if(keyword == "nullptr")
+                {
+                    advance(); // consume 'nullptr'
+                    return new LiteralNode // 'nullptr' is just 0 uint64
+                    {
+                        value = "0",
+                        type = DT.Uint
+                    };
+                }
+                else
+                {
+                    Error.Log($"Unsupported keyword in expression '{Data.FormatToken(peek())}'");
+                }
+            }
 
             Error.Log($"Unexpected token '{peek().value}', when in parsePrimary");
-            return new Nodes.LiteralNode { value = "0", type = DT.Int };         // placeholder, see below
+            return new LiteralNode { value = "0", type = DT.Int };
         }
 
         private static Node parseVariableDeclaration()
         {
-            TypeNode vartype;
-            string typeValue = advance().value;
+            TypeNode vartype = parseType();
 
-            if (Data.primativeTypes.ContainsKey(typeValue))
+            TypeNode checkNode = vartype;
+            while (true)
             {
-                vartype = new Nodes.PrimitiveTypeNode { value = typeValue };
+                if (checkNode is PointerTypeNode ptr) checkNode = ptr.pointeeType;
+                else if (checkNode is ReferenceTypeNode refNode) checkNode = refNode.pointeeType;
+                else break;
             }
-            else if (Data.customTypes.ContainsKey(typeValue))
+
+            string typeValue = "";
+            if (checkNode is PrimitiveTypeNode prim)
             {
-                Error.Log($"type '{typeValue}' not supported yet", ConsoleColor.DarkMagenta);
-                return new NullNode();
+                typeValue = prim.value;
             }
-            else
+
+            if (!Data.primativeTypes.ContainsKey(typeValue) && !Data.customTypes.ContainsKey(typeValue))
             {
-                Error.Log("unknown type in variable declaration", ConsoleColor.DarkMagenta);
+                Error.Log($"Unknown type '{typeValue}' in variable declaration", ConsoleColor.DarkMagenta);
                 return new NullNode();
             }
 
@@ -148,7 +224,6 @@ namespace WispAOT
 
             if (match(TokenType.Equals) != null)
             {
-                // parse the expression right after '='
                 expr = parseExpression();
             }
 
@@ -158,7 +233,7 @@ namespace WispAOT
                 return new NullNode();
             }
 
-            return new Nodes.DeclareVariableNode
+            return new DeclareVariableNode
             {
                 type = vartype,
                 variableName = varName,
@@ -176,43 +251,28 @@ namespace WispAOT
                 else if(check(TokenType.Type))
                 {
                     // get parameters
-                    while (!check(TokenType.CloseBracket) && !Error.hasError)
+                    while (!check(TokenType.CloseBracket) && !isAtEnd() && !Error.hasError)
                     {
-                        Token dataTok = advance();
-                        if(dataTok.type == TokenType.Type)
+                        TypeNode paramTypeNode = parseType();
+                        Token? nameTok = match(TokenType.Identifyer);
+                        
+                        if (nameTok == null)
                         {
-                            if (Data.primativeTypes.ContainsKey(dataTok.value))
-                            {
-                                Token nameTok = advance();
-                                if(nameTok.type == TokenType.Identifyer)
-                                {
-                                    parameterData.Add((nameTok.value, Data.primativeTypes[dataTok.value]));
-                                    if (check(TokenType.Comma))
-                                    {
-                                        advance();
-                                    }
-                                    else if(!check(TokenType.CloseBracket))
-                                    {
-                                        Error.Log($"Expected a ',' or ')'. Not {peek().value}");
-                                    }
-                                }
-                                else
-                                {
-                                    Error.Log($"Expected an identifyer but got a '{Data.FormatToken(nameTok)}'");
-                                }
-                            }
-                            else if (Data.customTypes.ContainsKey(dataTok.value))
-                            {
-                                Error.Log("Custom data types not supported");
-                            }
-                            else
-                            {
-                                Error.Log("Unknown data type");
-                            }
+                            Error.Log($"Expected an identifier for parameter, got '{peek().value}'");
+                            break;
                         }
-                        else
+
+                        VariableData paramData = resolveTypeNode(paramTypeNode);
+                        parameterData.Add((nameTok.value, paramData));
+
+                        if (check(TokenType.Comma))
                         {
-                            Error.Log($"Expected a data type in method declaration instead of {Data.FormatToken(dataTok)}");
+                            advance();
+                        }
+                        else if (!check(TokenType.CloseBracket))
+                        {
+                            Error.Log($"Expected a ',' or ')'. Not {peek().value}");
+                            break;
                         }
                     }
                 }
@@ -240,7 +300,7 @@ namespace WispAOT
             }
 
             // debug parem logs
-            Console.WriteLine($"{name} ({stackCounter}):");
+            if(Settings.Debug) Console.WriteLine($"{name} ({stackCounter}):");
             foreach(var parem in parameterData)
             {
                 Console.WriteLine($"    {parem.name}: {parem.data.type}{parem.data.bytes*8}");
@@ -288,10 +348,47 @@ namespace WispAOT
 
         private static Node parseVariableReassignment(bool inFor = false)
         {
-            string variableName = advance().value;
+            bool isIndirect = false;
+            string variableName = "";
+            if (check(TokenType.Operator) && peek().value == "*")
+            {
+                advance(); // consume '*'
+                isIndirect = true;
+                
+                Token? nameTok = match(TokenType.Identifyer);
+                if (nameTok == null)
+                {
+                    Error.Log("Expected an identifier after '*' in assignment");
+                    return new NullNode();
+                }
+                variableName = nameTok.value;
+            }
+            else
+            {
+                variableName = advance().value;
+            }
+
+            // reassignning a value to an object member
+            if (check(TokenType.Dot))
+            {
+                advance(); // consume "."
+                if(peek().type != TokenType.Identifyer)
+                {
+                    Error.Log($"Expected an identifyer (member names) after '{variableName}.'");
+                    return new NullNode();
+                }
+                string memberName = peek().value;
+
+                
+            }
 
             if (check(TokenType.OpenBracket))
             {
+                if (isIndirect)
+                {
+                    Error.Log("Cannot call a method on a dereferenced expression this way");
+                    return new NullNode();
+                }
                 Node call = parseMethodCall(variableName);
                 if (call is not CallNode c) return new NullNode();
 
@@ -307,10 +404,11 @@ namespace WispAOT
                 advance(); // consume '='
                 var expr = parseExpression();
 
-                Nodes.VariableReassignNode reassignNode = new()
+                VariableReassignNode reassignNode = new()
                 {
                     variableName = variableName,
-                    expression = expr
+                    expression = expr,
+                    isIndirect = isIndirect
                 };
 
                 if(inFor) return reassignNode;
@@ -322,10 +420,48 @@ namespace WispAOT
                 }
                 return reassignNode;
             }
+            else if (check(TokenType.OpenSquareBracket))
+            {
+                if (isIndirect)
+                {
+                    Error.Log("Use (*p)[i] to index through a dereferenced pointer");
+                    return new NullNode();
+                }
+
+                ExpressionNode target = new VariableReferenceNode { name = variableName };
+                while (match(TokenType.OpenSquareBracket) != null)
+                {
+                    ExpressionNode index = parseExpression();
+                    if (match(TokenType.CloseSquareBracket) == null)
+                    {
+                        Error.Log("Expected ']' after the index");
+                        return new NullNode();
+                    }
+                    target = new IndexNode { baseExpression = target, indexExpression = index };
+                }
+
+                if (match(TokenType.Equals) == null)
+                {
+                    Error.Log("Expected '=' after the indexed element");
+                    return new NullNode();
+                }
+
+                ExpressionNode value = parseExpression();
+                var node = new IndexAssignNode { target = (IndexNode)target, expression = value };
+
+                if (inFor) return node;
+                if (match(TokenType.SemiColon) == null)
+                {
+                    Error.Log("Expected ';' after the assignment");
+                    return new NullNode();
+                }
+                return node;
+            }
             else
             {
                 Error.Log("Unknown action to identifyer");
             }
+            isIndirect = false;
 
             return new NullNode();
         }
@@ -342,6 +478,11 @@ namespace WispAOT
                     return parseForStatement();
                 case "return":
                     return parseReturnStatement();
+                case "delete":
+                    return parseDeleteStatement();
+                case "struct":
+                case "class":
+                    return parseObject();
                 default:
                     Error.Log("Unsupported keyword used");
                     break;
@@ -350,6 +491,92 @@ namespace WispAOT
             return new NullNode();
         }
 
+        private static Node parseObject()
+        {
+            // unused for now. (except for consuming the keyword token)
+            // will be used for default public/private members
+            bool isClass = advance().value == "class";
+            Token name = advance();
+            if(name.type != TokenType.Identifyer)
+            {
+                Error.Log("Expected an identifyer after 'class' keyword");
+                return new NullNode();
+            }
+            if(match(TokenType.OpenCurlyBracket) == null)
+            {
+                Error.Log("Expected a '{' to start the class body");
+            }
+
+            List<Node> class_body = new();
+            while (!check(TokenType.CloseCurlyBracket) && !isAtEnd() && !Error.hasError)
+            {
+                int before = current;
+                var nodeToAdd = parseStatement();
+                class_body.Add(nodeToAdd);
+
+                if (current == before) // parse statement did nothing.. error occured?
+                {
+                    Error.Log($"Unexpected token {peek().type}('{peek().value}') in class body");
+                    advance();
+                }
+            }
+            if (!Error.hasError && match(TokenType.CloseCurlyBracket) == null) Error.Log("Expected '}' to close the class body");
+            
+            uint totalMemoryFootprint = 0;
+            Dictionary<string, VariableData> variablesInClass = new();
+
+            foreach(Node node in class_body)
+            {
+                if(node is DeclareVariableNode)
+                {
+                    DeclareVariableNode decl = (DeclareVariableNode)node;
+                    if(decl.type is PrimitiveTypeNode primType)
+                    {
+                        var data = Data.primativeTypes[primType.value];
+                        totalMemoryFootprint += data.bytes;
+                        variablesInClass[decl.variableName] = data;
+                    }
+                    else
+                    {
+                        Error.Log("Cannot use custom data types (including pointers) when declaring a class (for now its unsupported..)");
+                        return new NullNode();
+                    }
+                }
+                else
+                {
+                    Error.Log("Classes/Structs only support variable declaration inside them.");
+                    return new NullNode();
+                }
+            }
+
+            return new ObjectDeclareNode
+            {
+                name = name.value,
+                totalBytes = totalMemoryFootprint,
+                body = class_body,
+                variables = variablesInClass
+            };
+        }
+        private static Node parseDeleteStatement()
+        {
+            advance(); // consume 'delete'
+
+            if (!check(TokenType.Identifyer))
+            {
+                Error.Log("Expected a pointer to delete");
+                return new NullNode();
+            }
+
+            string name = advance().value;
+
+            if (match(TokenType.SemiColon) == null)
+            {
+                Error.Log("Expected ';' after delete");
+                return new NullNode();
+            }
+            
+            return new DeleteStatement { deletedPointer = name };
+        }
         private static Node parseIfStatement()
         {
             advance(); // keyword: 'if'
@@ -399,7 +626,7 @@ namespace WispAOT
                 if(peek().type == TokenType.Keyword && peek().value == "if")
                 {
                     else_body.Add(parseStatement());
-                    return new Nodes.IfNode {expression = expr, body = if_body, elseBody = else_body};
+                    return new IfNode {expression = expr, body = if_body, elseBody = else_body};
                 }
 
                 if(match(TokenType.OpenCurlyBracket) == null)
@@ -426,7 +653,7 @@ namespace WispAOT
 
                     if (!Error.hasError && match(TokenType.CloseCurlyBracket) == null) Error.Log("Expected '}' to close the else body");
                     
-                    return new Nodes.IfNode
+                    return new IfNode
                     {
                         expression = expr,
                         body = if_body,
@@ -436,7 +663,7 @@ namespace WispAOT
             }
             else
             {
-                return new Nodes.IfNode
+                return new IfNode
                 {
                     expression = expr,
                     body = if_body
@@ -578,6 +805,25 @@ namespace WispAOT
             }
 
             return new ReturnNode { expression = expr };
+        }
+
+        private static VariableData resolveTypeNode(TypeNode typeNode)
+        {
+            if (typeNode is PrimitiveTypeNode p)
+            {
+                return Data.primativeTypes[p.value];
+            }
+            if (typeNode is PointerTypeNode ptr)
+            {
+                VariableData pointee = resolveTypeNode(ptr.pointeeType);
+                return Data.MakePointer(pointee);
+            }
+            if (typeNode is ReferenceTypeNode refNode)
+            {
+                VariableData pointee = resolveTypeNode(refNode.pointeeType);
+                return Data.MakeReference(pointee);
+            }
+            return Data.primativeTypes["int"];
         }
 
         private static Token peek() => tokens[current];

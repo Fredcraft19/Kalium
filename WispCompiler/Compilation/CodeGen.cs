@@ -55,14 +55,21 @@ namespace WispAOT
             switch (node)
             {
                 case Nodes.VariableReassignNode res:
+                {
+                    if (res.expression == null) break;
+                    generateExpression(res.expression);
+
+                    if (res.isIndirect || res.varType!.isReference)
                     {
-                        if(res.expression != null)
-                        {
-                            generateExpression(res.expression);
-                            emit($"{storeOp(res.varType!)} {res.offset}");
-                        }
-                        break;
+                        emit($"loadu64 {res.offset}");
+                        emit(storeAddrOp(res.varType!.pointeeType!));
                     }
+                    else
+                    {
+                        emit($"{storeOp(res.varType!)} {res.offset}");
+                    }
+                    break;
+                }
                 case Nodes.DeclareVariableNode d:
                     {
                         if(d.expression != null)
@@ -117,6 +124,20 @@ namespace WispAOT
                         generateReturn(Return);
                         break;
                     }
+                case Nodes.DeleteStatement Delete:
+                    {
+                        generateDeleteStatement(Delete);
+                         break;
+                    }
+                case Nodes.IndexAssignNode ia:{
+                        generateExpression(ia.expression!); 
+                        generateElementAddress(ia.target!);      
+                        emit(storeAddrOp(ia.target!.resolvedType!));
+                        break;
+                    }
+
+                case ObjectDeclareNode: break; // a class is entirely compiler-side so no assembly generated
+
                 default:
                     Error.Log($"Unsupported Node of type: '{node.GetType().Name}'");
                     break;
@@ -208,6 +229,7 @@ namespace WispAOT
             foreach(Node node in methodNode.body)
                 generateNode(node);
 
+            
             emit("ret");
         }
         private static void generateMethodParameter(VariableData parameterData, uint offset)
@@ -224,6 +246,33 @@ namespace WispAOT
         private static void generateReturn(Nodes.ReturnNode Return)
         {
             generateExpression(Return.expression!);
+            emit($"ret");
+        }
+
+        private static void generateNewStatement(NewStatement New)
+        {
+            if (New.count != null)
+            {
+                generateExpression(New.count);
+                emit($"push {New.data!.bytes}");
+                emit("mul-u");
+            }
+            else emit($"push {New.data!.bytes}");
+            emit("malloc");
+        }
+        private static void generateDeleteStatement(DeleteStatement Delete)
+        {
+            emit($"loadu64 {Delete.pointerAddress}");
+            emit($"free");
+        }
+
+        private static void generateElementAddress(Nodes.IndexNode n)
+        {
+            generateExpression(n.baseExpression!);
+            generateExpression(n.indexExpression!);
+            emit($"push {n.resolvedType!.bytes}");
+            emit("mul-s");
+            emit("add-u");
         }
 
         private static void generateExpression(ExpressionNode expression)
@@ -250,6 +299,28 @@ namespace WispAOT
                 case Nodes.CallNode Call:
                     generateMethodCall(Call);
                     break;
+
+                case Nodes.UnaryExpressionNode u:
+                    if (u.oper!.value == "&")
+                    {
+                        if (u.operand is Nodes.VariableReferenceNode r)
+                        {
+                            emit($"ref {r.offset}");
+                        }
+                    }
+                    else if (u.oper!.value == "*")
+                    {
+                        generateExpression(u.operand!);
+                        emit($"{loadAddrOp(u.resolvedType!)} {u.resolvedType!.bytes}");
+                    }
+                    break;
+                case NewStatement New:
+                    generateNewStatement(New);
+                    break;
+                case Nodes.IndexNode idx:
+                    generateElementAddress(idx);
+                    emit(loadAddrOp(idx.resolvedType!));
+                    break;
                 
                 default:
                     Error.Log($"CodeGen: unsupported expression: '{expression.GetType().Name}'");
@@ -258,8 +329,19 @@ namespace WispAOT
         }
 
         private static string loadOp(VariableData t) => t.type == DT.Float ? $"loadf{t.bytes * 8}" : $"load{((t.type == DT.Uint || t.type == DT.Bool) ? "u" : "s")}{t.bytes * 8}";
-
+        private static string loadAddrOp(VariableData t)
+        {
+            string prefix = t.type == DT.Float 
+                ? $"loadf{t.bytes * 8}" 
+                : $"load{((t.type == DT.Uint || t.type == DT.Bool) ? "u" : "s")}{t.bytes * 8}";
+            return $"{prefix}*";
+        }
         private static string storeOp(VariableData t) => t.type == DT.Float ? $"storef{t.bytes * 8}" : $"store{t.bytes * 8}";
+        private static string storeAddrOp(VariableData t)
+        {
+            string baseOp = t.type == DT.Float ? $"storef{t.bytes * 8}" : $"store{t.bytes * 8}";
+            return $"{baseOp}*";
+        }
         private static string operatorOp(string op, VariableData t) => op switch
         {
             "+" => $"add-{suffix(t.type)}",
@@ -305,7 +387,7 @@ namespace WispAOT
 
             output += method_name == "main" ? "main" : $"method_{method_name}_{labelCount}";
             methodLabelNames[method_name] = output;
-            label(prettyPrint ? $"\n{output}" : output);
+            label(output);
         }
         private static string getMethodLabel(string method_name)
         {
@@ -316,7 +398,26 @@ namespace WispAOT
             }
             return methodLabelNames[method_name];
         }
-        private static VariableData declaredType(Nodes.DeclareVariableNode d) => Data.primativeTypes[((Nodes.PrimitiveTypeNode)d.type!).value];
+        private static VariableData resolveTypeNode(TypeNode typeNode)
+        {
+            if (typeNode is Nodes.PrimitiveTypeNode p)
+            {
+                return Data.primativeTypes[p.value];
+            }
+            if (typeNode is Nodes.PointerTypeNode ptr)
+            {
+                VariableData pointee = resolveTypeNode(ptr.pointeeType);
+                return Data.MakePointer(pointee);
+            }
+            if (typeNode is Nodes.ReferenceTypeNode refNode)
+            {
+                VariableData pointee = resolveTypeNode(refNode.pointeeType);
+                return Data.MakeReference(pointee);
+            }
+            return Data.primativeTypes["int"];
+        }
+
+        private static VariableData declaredType(Nodes.DeclareVariableNode d) => resolveTypeNode(d.type!);
         private static void writeHeader()
         {
             sb?.AppendLine("call main");

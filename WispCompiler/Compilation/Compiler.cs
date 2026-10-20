@@ -11,6 +11,8 @@ namespace WispAOT
         /// <returns></returns>
         public static string Compile(string source, CompilerSettings settings)
         {
+            Settings.Extract(settings);
+            
             Stopwatch timer = new Stopwatch();
             if(settings == null) settings = new();
 
@@ -22,7 +24,7 @@ namespace WispAOT
             timer.Reset();
             timer.Start();
 
-            Tokeniser.Tokenise(ref tokens, source, settings.Log);           
+            Tokeniser.Tokenise(ref tokens, source);           
             Parser.GenerateNodes(ref nodes, tokens);
             Analyser.Analyse(ref nodes);
             string wsa = CodeGen.Generate(nodes, settings.PrettyPrintAssembly);

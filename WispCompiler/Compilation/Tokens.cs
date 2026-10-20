@@ -17,10 +17,12 @@ namespace WispAOT
         Float,
         Integer,
         Boolean,
+        String,
         Operator,
         SemiColon,
 
         Comma,
+        Dot,
         
 
         OpenBracket,
@@ -28,6 +30,9 @@ namespace WispAOT
 
         OpenCurlyBracket,
         CloseCurlyBracket,
+
+        OpenSquareBracket,
+        CloseSquareBracket,
 
         END,
         Error = 0xFF,
